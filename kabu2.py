@@ -32,7 +32,7 @@ FROM_EMAIL = "KABU監視 <onboarding@resend.dev>"
 # ローカルテスト用
 # ============================================================
 # ★ここに自分のResend APIキーを入れる
-RESEND_API_KEY = "RESEND_API"
+RESEND_API_KEY = os.environ["RESEND_API"]
 
 # ★システム異常通知を受け取る自分のGmail
 ADMIN_EMAIL = "yama01yu18@gmail.com"
