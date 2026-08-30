@@ -2,8 +2,7 @@ name: KABU Monitor 2
 
 on:
   schedule:
-    # 日本時間 よる22:00 ごろに実行 日夜〜金夜　土夜は判定しない 
-    # GitHub Actions cronはUTC
+    # 日本時間 日〜木 22:00
     - cron: "0 13 * * 0-5"
 
   workflow_dispatch:
@@ -24,11 +23,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas yfinance resend openpyxl
+          pip install -r requirements.txt
 
       - name: Run KABU monitor
         env:
-          RESEND_API: ${{ secrets.RESEND_API }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: |
           python kabu2.py
