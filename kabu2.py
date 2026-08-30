@@ -1,57 +1,44 @@
 import os
 import argparse
+import smtplib
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from email.mime.text import MIMEText
 
 import pandas as pd
 import yfinance as yf
-import resend
-import sys
-print("使用Python:", sys.executable)
-print("Python version:", sys.version)
 
 
 # ============================================================
 # 基本設定
 # ============================================================
 
-# このPythonファイルがあるフォルダ
 BASE_DIR = Path(__file__).resolve().parent
 
-# Excelファイル
 EXCEL_FILE = BASE_DIR / "customers.xlsx"
 
-# Excelのシート名
 SHEET_NAME = "customers"
 
-# Resend送信元
-FROM_EMAIL = "KABU監視 <onboarding@resend.dev>"
-
-# ============================================================
-# ローカルテスト用
-# ============================================================
-# ★ここに自分のResend APIキーを入れる
-RESEND_API = os.environ["RESEND_API"]
-
-# ★システム異常通知を受け取る自分のGmail
-ADMIN_EMAIL = "yama01yu18@gmail.com"
-
-
-# ============================================================
-# GitHub Actionsに移行するときは
-# 上の2行を削除して、こちらを使う
-# ============================================================
-
-# RESEND_API_KEY = os.environ["RESEND_API"]
-# ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
-
-
-# Resend APIキー設定
-resend.api_key = RESEND_API
-
-# 日本時間
 JST = ZoneInfo("Asia/Tokyo")
+
+
+# ============================================================
+# Gmail設定
+# ============================================================
+
+# GitHub ActionsではSecretsから取得
+#
+# GMAIL_ADDRESS
+# GMAIL_APP_PASSWORD
+# ADMIN_EMAIL
+
+GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
+
+GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
+
+ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 
 
 # ============================================================
@@ -62,20 +49,49 @@ def send_email(to_email, subject, body):
 
     try:
 
-        resend.Emails.send({
-            "from": FROM_EMAIL,
-            "to": to_email,
-            "subject": subject,
-            "text": body
-        })
+        msg = MIMEText(
+            body,
+            "plain",
+            "utf-8"
+        )
 
-        print(f"✅ メール送信成功: {to_email}")
+        msg["Subject"] = subject
+
+        msg["From"] = (
+            f"KABU監視 <{GMAIL_ADDRESS}>"
+        )
+
+        msg["To"] = to_email
+
+
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465
+        ) as server:
+
+            server.login(
+                GMAIL_ADDRESS,
+                GMAIL_APP_PASSWORD
+            )
+
+            server.send_message(msg)
+
+
+        print(
+            f"✅ メール送信成功: "
+            f"{to_email}"
+        )
 
         return True
 
+
     except Exception as e:
 
-        print(f"❌ メール送信失敗: {to_email}")
+        print(
+            f"❌ メール送信失敗: "
+            f"{to_email}"
+        )
+
         print(e)
 
         return False
@@ -87,22 +103,18 @@ def send_email(to_email, subject, body):
 
 def send_admin_alert(subject, body):
 
-    try:
+    success = send_email(
+        ADMIN_EMAIL,
+        f"🚨 KABU監視システム異常：{subject}",
+        body
+    )
 
-        resend.Emails.send({
-            "from": FROM_EMAIL,
-            "to": ADMIN_EMAIL,
-            "subject": f"🚨 KABU監視システム異常：{subject}",
-            "text": body
-        })
+    if not success:
 
-    except Exception as e:
-
-        # Resend自体が止まっている可能性もあるので
-        # ここでさらにメールを送ろうとはしない
-
-        print("❌ 運営者への異常通知も失敗しました")
-        print(e)
+        print(
+            "❌ 運営者への"
+            "異常通知も失敗しました"
+        )
 
 
 # ============================================================
@@ -117,6 +129,7 @@ def load_customers():
         print("Excelファイル:")
         print(EXCEL_FILE)
 
+
         df = pd.read_excel(
             EXCEL_FILE,
             sheet_name=SHEET_NAME,
@@ -124,12 +137,11 @@ def load_customers():
                 "customer_id": str,
                 "email": str,
                 "name": str,
-                "ticker": str,
-                "purchase_date": str
+                "ticker": str
             }
         )
 
-        # 必須列
+
         required_columns = [
             "customer_id",
             "email",
@@ -142,45 +154,68 @@ def load_customers():
             "enabled"
         ]
 
-        # 足りない列を確認
+
         missing_columns = []
 
         for column in required_columns:
 
             if column not in df.columns:
-                missing_columns.append(column)
+
+                missing_columns.append(
+                    column
+                )
+
 
         if missing_columns:
 
             raise ValueError(
-                f"Excelに必要な列がありません: {missing_columns}"
+                "Excelに必要な列がありません: "
+                f"{missing_columns}"
             )
 
-        print(f"Excel読込成功: {len(df)}行")
+
+        print(
+            f"Excel読込成功: "
+            f"{len(df)}行"
+        )
+
 
         return df
+
 
     except Exception as e:
 
         print()
-        print("❌ Excel読み込みエラー")
+        print(
+            "❌ Excel読み込みエラー"
+        )
+
         print(e)
+
 
         send_admin_alert(
             "Excel読み込みエラー",
             f"""
 customers.xlsx の読み込みに失敗しました。
 
+
 Excelファイル:
+
 {EXCEL_FILE}
 
+
 シート名:
+
 {SHEET_NAME}
 
+
 エラー:
+
 {e}
 
+
 実行日時:
+
 {datetime.now(JST)}
 """
         )
@@ -189,12 +224,15 @@ Excelファイル:
 
 
 # ============================================================
-# enabled判定
+# enabled 判定
 # ============================================================
 
 def is_enabled(value):
 
-    text = str(value).strip().lower()
+    text = str(
+        value
+    ).strip().lower()
+
 
     return text in [
         "true",
@@ -209,20 +247,29 @@ def is_enabled(value):
 # 株価取得
 # ============================================================
 
-def get_stock_data(ticker, purchase_date):
+def get_stock_data(
+    ticker,
+    purchase_date
+):
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(
+        ticker
+    )
+
 
     data = stock.history(
         start=purchase_date,
         auto_adjust=False
     )
 
+
     if data.empty:
 
         raise ValueError(
-            "株価データを取得できませんでした"
+            "株価データを"
+            "取得できませんでした"
         )
+
 
     if "Close" not in data.columns:
 
@@ -230,13 +277,18 @@ def get_stock_data(ticker, purchase_date):
             "Close列がありません"
         )
 
-    close = data["Close"].dropna()
+
+    close = data[
+        "Close"
+    ].dropna()
+
 
     if close.empty:
 
         raise ValueError(
             "終値データがありません"
         )
+
 
     return close
 
@@ -247,29 +299,65 @@ def get_stock_data(ticker, purchase_date):
 
 def check_stock(row):
 
+
     # --------------------------------------------------------
-    # Excelから顧客情報取得
+    # 顧客情報
     # --------------------------------------------------------
 
-    customer_id = row["customer_id"]
-    email = row["email"]
+    customer_id = row[
+        "customer_id"
+    ]
 
-    name = row["name"]
-    ticker = row["ticker"]
+    email = row[
+        "email"
+    ]
 
-   
-    purchase_date = pd.to_datetime(
-    row["purchase_date"]).strftime("%Y-%m-%d")
+    name = row[
+        "name"
+    ]
 
-    average_price = float(row["average_price"])
-    start_rate = float(row["start_rate"])
-    drop_rate = float(row["drop_rate"])
+    ticker = row[
+        "ticker"
+    ]
+
+
+    # Excelの日付を
+    # YYYY-MM-DDに統一
+    purchase_date = (
+        pd.to_datetime(
+            row["purchase_date"]
+        )
+        .strftime("%Y-%m-%d")
+    )
+
+
+    average_price = float(
+        row["average_price"]
+    )
+
+    start_rate = float(
+        row["start_rate"]
+    )
+
+    drop_rate = float(
+        row["drop_rate"]
+    )
 
 
     print()
-    print("=" * 60)
-    print(f"{customer_id} / {name} / {ticker}")
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
+
+    print(
+        f"{customer_id} / "
+        f"{name} / "
+        f"{ticker}"
+    )
+
+    print(
+        "=" * 60
+    )
 
 
     try:
@@ -284,18 +372,18 @@ def check_stock(row):
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # 最新終値
-        # ----------------------------------------------------
+        # ====================================================
 
         current_price = float(
             price.iloc[-1]
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # 購入日以降の最高終値
-        # ----------------------------------------------------
+        # ====================================================
 
         highest_price = float(
             price.max()
@@ -303,21 +391,22 @@ def check_stock(row):
 
 
         # ====================================================
-        # 監視開始ライン計算
+        # 監視開始ライン
         # ====================================================
-
-        # 例
         #
-        # 平均取得価格 100円
-        # start_rate 30
-        #
-        # 100 × 1.30
+        # average_price = 100
+        # start_rate = 30
         #
         # → 130円
+        #
+        # ====================================================
 
         start_price = (
             average_price
-            * (1 + start_rate / 100)
+            * (
+                1
+                + start_rate / 100
+            )
         )
 
 
@@ -326,15 +415,20 @@ def check_stock(row):
         # ====================================================
 
         profit_rate = (
-            current_price / average_price - 1
+            current_price
+            / average_price
+            - 1
         ) * 100
 
 
         # ====================================================
-        # 現在状況表示
+        # 表示
         # ====================================================
 
-        print(f"購入日: {purchase_date}")
+        print(
+            f"購入日: "
+            f"{purchase_date}"
+        )
 
         print(
             f"平均取得価格: "
@@ -366,68 +460,78 @@ def check_stock(row):
         # 監視対象判定
         # ====================================================
         #
-        # ★重要
-        #
-        # 過去に監視ラインを超えたかではなく、
-        #
-        # 「現在値」が平均取得価格から
+        # 現在値が、
+        # 平均取得価格から
         # 指定率以上上昇しているか
-        #
-        # で判定
         #
         # ====================================================
 
         if current_price < start_price:
 
             print()
-            print("⚪ 監視対象外")
+            print(
+                "⚪ 監視対象外"
+            )
+
 
             remaining_rate = (
-                start_price / current_price - 1
+                start_price
+                / current_price
+                - 1
             ) * 100
 
+
             print(
-                f"あと {remaining_rate:.1f}% "
+                f"あと "
+                f"{remaining_rate:.1f}% "
                 f"上昇すると監視対象"
             )
+
 
             return
 
 
         print()
-        print("🟢 監視対象")
+        print(
+            "🟢 監視対象"
+        )
 
 
         # ====================================================
         # 通知ライン
         # ====================================================
-
-        # 例
         #
-        # 最高値200円
-        # drop_rate 10
-        #
-        # 200 × 0.90
+        # highest_price = 200
+        # drop_rate = 10
         #
         # → 180円
+        #
+        # ====================================================
 
         alert_price = (
             highest_price
-            * (1 - drop_rate / 100)
+            * (
+                1
+                - drop_rate / 100
+            )
         )
 
 
         # ====================================================
-        # 最高値からの実際の下落率
+        # 最高値からの下落率
         # ====================================================
 
         actual_drop_rate = (
-            1 - current_price / highest_price
+            1
+            - current_price
+            / highest_price
         ) * 100
 
 
         print()
-        print("【下落判定】")
+        print(
+            "【下落判定】"
+        )
 
         print(
             f"最高終値: "
@@ -446,18 +550,21 @@ def check_stock(row):
 
 
         # ====================================================
-        # メール通知判定
+        # 通知条件
         # ====================================================
 
         if current_price <= alert_price:
 
             print()
-            print("🚨 通知条件到達")
+            print(
+                "🚨 通知条件到達"
+            )
 
 
             subject = (
-                f"【KABU監視】"
-                f"{name} が設定条件に到達しました"
+                "【KABU監視】"
+                f"{name} が"
+                "設定条件に到達しました"
             )
 
 
@@ -467,7 +574,7 @@ KABU監視システムからのお知らせです。
 
 【登録銘柄】
 
-{name}（{ticker})
+{name}（{ticker}）
 
 
 【購入情報】
@@ -508,7 +615,7 @@ KABU監視システムからのお知らせです。
 
 本通知は売却を推奨するものではありません。
 
-実際の売却・保有については
+実際の売却・保有については、
 ご自身でご判断ください。
 """
 
@@ -520,10 +627,9 @@ KABU監視システムからのお知らせです。
             )
 
 
-            # ------------------------------------------------
-            # 条件通知メールが送れなかった場合
-            # 運営者へ通知
-            # ------------------------------------------------
+            # =================================================
+            # 通知失敗
+            # =================================================
 
             if not success:
 
@@ -534,24 +640,37 @@ KABU監視システムからのお知らせです。
 
 
 顧客ID:
+
 {customer_id}
 
+
 メール:
+
 {email}
 
+
 銘柄:
+
 {name}
 
+
 Ticker:
+
 {ticker}
 
+
 最新終値:
+
 {current_price}
 
+
 最高終値:
+
 {highest_price}
 
+
 実行日時:
+
 {datetime.now(JST)}
 """
                 )
@@ -560,30 +679,36 @@ Ticker:
         else:
 
             print()
-            print("通知条件には未到達")
+            print(
+                "通知条件には未到達"
+            )
 
-
-            # 現在値から通知価格までの距離
 
             remaining_drop = (
-                1 - alert_price / current_price
+                1
+                - alert_price
+                / current_price
             ) * 100
 
 
             print(
                 f"現在値からあと "
-                f"{remaining_drop:.1f}%下落すると通知"
+                f"{remaining_drop:.1f}% "
+                f"下落すると通知"
             )
 
 
     # ========================================================
-    # 株価監視処理で異常があった場合
+    # 監視処理異常
     # ========================================================
 
     except Exception as e:
 
         print()
-        print(f"❌ 銘柄監視エラー: {e}")
+        print(
+            f"❌ 銘柄監視エラー: "
+            f"{e}"
+        )
 
 
         send_admin_alert(
@@ -593,18 +718,27 @@ Ticker:
 
 
 顧客ID:
+
 {customer_id}
 
+
 メール:
+
 {email}
 
+
 銘柄:
+
 {name}
 
+
 Ticker:
+
 {ticker}
 
+
 購入日:
+
 {purchase_date}
 
 
@@ -614,68 +748,64 @@ Ticker:
 
 
 実行日時:
+
 {datetime.now(JST)}
 """
         )
 
 
 # ============================================================
-# 日曜日の通信試験
+# 通信試験
 # ============================================================
 
 def send_weekly_health_check(df):
 
-    today = datetime.now(JST)
+    today = datetime.now(
+        JST
+    )
 
-
-    # --------------------------------------------------------
-    # Python weekday
-    #
-    # 月 = 0
-    # 火 = 1
-    # 水 = 2
-    # 木 = 3
-    # 金 = 4
-    # 土 = 5
-    # 日 = 6
-    # --------------------------------------------------------
-
-    if today.weekday() != 6:
-
-        return
-
-
-    print()
-    print("=" * 60)
-    print("🟢 日曜日：通信試験")
-    print("=" * 60)
-
-
-    # ========================================================
-    # enabledがTRUEの銘柄のみ
-    # ========================================================
 
     active_df = df[
-        df["enabled"].apply(is_enabled)
+        df["enabled"].apply(
+            is_enabled
+        )
     ]
 
 
+    print()
+    print(
+        "=" * 60
+    )
+
+    print(
+        "🟢 通信試験"
+    )
+
+    print(
+        "=" * 60
+    )
+
+
     # ========================================================
-    # メールアドレスごとにまとめる
-    #
-    # 同じ人が5銘柄登録していても
-    # メールは1通だけ
+    # メールアドレスごとに1通
     # ========================================================
 
-    for email, group in active_df.groupby("email"):
+    for email, group in (
+        active_df.groupby(
+            "email"
+        )
+    ):
 
-
-        stock_count = len(group)
+        stock_count = len(
+            group
+        )
 
 
         stock_names = "\n".join(
-            f"・{row['name']}（{row['ticker']}）"
-            for _, row in group.iterrows()
+            f"・{row['name']} "
+            f"（{row['ticker']}）"
+            for _, row
+            in group.iterrows()
         )
 
 
@@ -716,25 +846,26 @@ KABU監視システムは正常に稼働しています。
         )
 
 
-        # ----------------------------------------------------
-        # 通信試験メールが送れなかった
-        # ----------------------------------------------------
-
         if not success:
 
             send_admin_alert(
-                "日曜通信試験メール送信失敗",
+                "通信試験メール送信失敗",
                 f"""
-日曜通信試験メールの送信に失敗しました。
+通信試験メールの送信に失敗しました。
 
 
 送信先:
+
 {email}
 
+
 登録銘柄数:
+
 {stock_count}
 
+
 実行日時:
+
 {today}
 """
             )
@@ -744,11 +875,14 @@ KABU監視システムは正常に稼働しています。
 # 初回テストメール
 # ============================================================
 
-def send_test_email(df, customer_id):
+def send_test_email(
+    df,
+    customer_id
+):
 
 
     # ========================================================
-    # 指定customer_idだけ抽出
+    # 指定顧客だけ抽出
     # ========================================================
 
     rows = df[
@@ -757,24 +891,20 @@ def send_test_email(df, customer_id):
     ]
 
 
-    # ========================================================
-    # enabledがTRUEのみ
-    # ========================================================
-
+    # enabled TRUEのみ
     rows = rows[
-        rows["enabled"].apply(is_enabled)
+        rows["enabled"].apply(
+            is_enabled
+        )
     ]
 
-
-    # ========================================================
-    # customer_idが存在しない
-    # ========================================================
 
     if rows.empty:
 
         print()
         print(
-            f"❌ customer_id={customer_id} "
+            f"❌ customer_id="
+            f"{customer_id} "
             "が見つかりません"
         )
 
@@ -782,26 +912,45 @@ def send_test_email(df, customer_id):
 
 
     # ========================================================
-    # メールアドレス
+    # 同一customer_idに
+    # 複数メールアドレスがないか確認
     # ========================================================
 
-    email = rows.iloc[0]["email"]
+    emails = (
+        rows["email"]
+        .dropna()
+        .unique()
+    )
 
 
-    # ========================================================
-    # 登録銘柄数
-    # ========================================================
+    if len(emails) != 1:
 
-    stock_count = len(rows)
+        print()
+        print(
+            "❌ 同じcustomer_idに"
+            "複数のメールアドレスがあります"
+        )
+
+        print(
+            emails
+        )
+
+        return
 
 
-    # ========================================================
-    # 登録銘柄一覧
-    # ========================================================
+    email = emails[0]
+
+
+    stock_count = len(
+        rows
+    )
+
 
     stock_names = "\n".join(
-        f"・{row['name']}（{row['ticker']}）"
-        for _, row in rows.iterrows()
+        f"・{row['name']} "
+        f"（{row['ticker']}）"
+        for _, row
+        in rows.iterrows()
     )
 
 
@@ -833,7 +982,7 @@ KABU監視システムへの登録テストメールです。
 メールでお知らせします。
 
 
-また、毎週日曜日に
+また、定期的に
 監視システムの稼働確認メールをお送りします。
 """
 
@@ -848,13 +997,17 @@ KABU監視システムへの登録テストメールです。
     if success:
 
         print()
-        print("✅ テストメール送信完了")
+        print(
+            "✅ テストメール送信完了"
+        )
 
 
     else:
 
         print()
-        print("❌ テストメール送信失敗")
+        print(
+            "❌ テストメール送信失敗"
+        )
 
 
         send_admin_alert(
@@ -864,40 +1017,55 @@ KABU監視システムへの登録テストメールです。
 
 
 customer_id:
+
 {customer_id}
 
+
 送信先:
+
 {email}
 
+
 実行日時:
+
 {datetime.now(JST)}
 """
         )
 
 
 # ============================================================
-# 通常の株価監視
+# 通常監視
 # ============================================================
 
 def run_monitor(df):
 
-
-    now = datetime.now(JST)
+    now = datetime.now(
+        JST
+    )
 
 
     print()
-    print("=" * 70)
-    print("KABU監視システム")
-    print(f"実行日時: {now}")
-    print("=" * 70)
+    print(
+        "=" * 70
+    )
 
+    print(
+        "KABU監視システム"
+    )
 
-    # ========================================================
-    # enabled TRUEだけ取得
-    # ========================================================
+    print(
+        f"実行日時: {now}"
+    )
+
+    print(
+        "=" * 70
+    )
+
 
     active_df = df[
-        df["enabled"].apply(is_enabled)
+        df["enabled"].apply(
+            is_enabled
+        )
     ]
 
 
@@ -909,25 +1077,51 @@ def run_monitor(df):
 
 
     # ========================================================
-    # 各銘柄チェック
+    # 各銘柄監視
     # ========================================================
 
-    for _, row in active_df.iterrows():
+    for _, row in (
+        active_df.iterrows()
+    ):
 
-        check_stock(row)
+        check_stock(
+            row
+        )
 
 
     # ========================================================
-    # 日曜日なら通信試験
+    # 月曜日だけ通信試験
+    #
+    # Python weekday
+    #
+    # 月 = 0
+    # 火 = 1
+    # 水 = 2
+    # 木 = 3
+    # 金 = 4
+    # 土 = 5
+    # 日 = 6
     # ========================================================
 
-    send_weekly_health_check(df)
+    if now.weekday() == 0:
+
+        send_weekly_health_check(
+            df
+        )
 
 
     print()
-    print("=" * 70)
-    print("KABU監視終了")
-    print("=" * 70)
+    print(
+        "=" * 70
+    )
+
+    print(
+        "KABU監視終了"
+    )
+
+    print(
+        "=" * 70
+    )
 
 
 # ============================================================
@@ -936,10 +1130,6 @@ def run_monitor(df):
 
 if __name__ == "__main__":
 
-
-    # ========================================================
-    # コマンドライン引数
-    # ========================================================
 
     parser = argparse.ArgumentParser()
 
@@ -958,14 +1148,14 @@ if __name__ == "__main__":
 
 
     # ========================================================
-    # Excel読み込み
+    # Excel読込
     # ========================================================
 
     df = load_customers()
 
 
     # ========================================================
-    # テストメールモード
+    # テストメール
     # ========================================================
 
     if args.test_customer:
@@ -977,9 +1167,11 @@ if __name__ == "__main__":
 
 
     # ========================================================
-    # 通常監視モード
+    # 通常監視
     # ========================================================
 
     else:
 
-        run_monitor(df)
+        run_monitor(
+            df
+        )
