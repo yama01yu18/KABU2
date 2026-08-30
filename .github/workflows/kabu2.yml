@@ -2,9 +2,9 @@ name: KABU Monitor 2
 
 on:
   schedule:
-    # 日本時間 10:00 ごろに実行
+    # 日本時間 よる22:00 ごろに実行 日夜〜金夜　土夜は判定しない 
     # GitHub Actions cronはUTC
-    - cron: "10 8 * * *"
+    - cron: "0 13 * * 0-5"
 
   workflow_dispatch:
 
